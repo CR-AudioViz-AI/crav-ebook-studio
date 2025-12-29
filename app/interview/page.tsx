@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, Sparkles, Send } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Sparkles, Send, Loader2 } from "lucide-react";
 import Link from "next/link";
 
 interface InterviewStep {
@@ -115,9 +116,11 @@ const interviewSteps: InterviewStep[] = [
 ];
 
 export default function InterviewPage() {
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const step = interviewSteps[currentStep];
   const progress = ((currentStep + 1) / interviewSteps.length) * 100;
@@ -140,12 +143,48 @@ export default function InterviewPage() {
 
   const handleGenerateBlueprint = async () => {
     setIsGenerating(true);
-    // TODO: Call AI to generate blueprint based on answers
-    console.log("Generating blueprint with answers:", answers);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    setIsGenerating(false);
-    // TODO: Navigate to blueprint review page
+    setError(null);
+
+    try {
+      // Format answers into interview responses
+      const interview_responses = interviewSteps.map((step) => ({
+        question_id: step.id,
+        question: step.question,
+        answer: Array.isArray(answers[step.id])
+          ? (answers[step.id] as string[]).join(", ")
+          : (answers[step.id] as string) || "Not answered",
+        timestamp: new Date().toISOString(),
+      }));
+
+      // Call the blueprint generation API
+      const response = await fetch("/api/ai/blueprint", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // TODO: Add auth header when auth is implemented
+        },
+        body: JSON.stringify({ interview_responses }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to generate blueprint");
+      }
+
+      const { data: blueprint } = await response.json();
+
+      // Store blueprint in sessionStorage for the blueprint page
+      sessionStorage.setItem("bookBlueprint", JSON.stringify(blueprint));
+      sessionStorage.setItem("interviewResponses", JSON.stringify(interview_responses));
+
+      // Navigate to blueprint review page
+      router.push("/blueprint");
+    } catch (err) {
+      console.error("Blueprint generation error:", err);
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const currentAnswer = answers[step.id];
@@ -183,6 +222,13 @@ export default function InterviewPage() {
           <h1 className="text-2xl font-bold mb-2">{step.question}</h1>
           {step.helpText && (
             <p className="text-muted-foreground mb-6">{step.helpText}</p>
+          )}
+
+          {/* Error Message */}
+          {error && (
+            <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+              {error}
+            </div>
           )}
 
           {/* Input */}
@@ -280,7 +326,7 @@ export default function InterviewPage() {
               >
                 {isGenerating ? (
                   <>
-                    <span className="animate-spin">⏳</span>
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     Generating Blueprint...
                   </>
                 ) : (
@@ -296,7 +342,10 @@ export default function InterviewPage() {
 
         {/* Skip Link */}
         <div className="text-center mt-6">
-          <button className="text-sm text-muted-foreground hover:text-foreground">
+          <button
+            onClick={handleNext}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
             Skip this question
           </button>
         </div>
